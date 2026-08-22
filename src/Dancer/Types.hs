@@ -10,6 +10,7 @@ data Package = Package
   , pkgVersion :: String
   , pkgDeps :: [String]
   , pkgUseFlags :: [String]
+  , pkgSource :: PackageSource
   } deriving (Show, Eq, Generic)
 
 data SystemConfig = SystemConfig
