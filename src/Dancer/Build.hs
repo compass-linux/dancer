@@ -9,6 +9,7 @@ import Data.List (nub, intercalate)
 import Dancer.Types
 import Dancer.Logging
 import Dancer.Fetch (fetchPackageSource)
+import qualified Dancer.Config as Config
 
 buildCacheDir :: FilePath
 buildCacheDir = "/var/lib/dancer/cache"
@@ -52,9 +53,9 @@ buildSystem config fromScratch = do
   logSubStep "Setting up build directories"
   logOK "Build directories ready"
   
-  logSubStep "Resolving package dependencies"
-  let resolvedPkgs = resolveDependencies (packages config)
-  logOK $ "Resolved " ++ show (length resolvedPkgs) ++ " packages"
+  logSubStep "Loading packages from repository"
+  resolvedPkgs <- Config.resolvePackagesByName (packages config)
+  logOK $ "Loaded " ++ show (length resolvedPkgs) ++ " packages"
   
   logSubStep "Checking for package conflicts"
   case checkConflicts config resolvedPkgs of
@@ -143,6 +144,9 @@ buildPackage config pkg = do
 
 buildAutotools :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
 buildAutotools config pkg sourceDir encirclement = do
+  logSubStep "Initializing git submodules"
+  system $ "cd " ++ sourceDir ++ " && git submodule update --init --recursive"
+  
   logSubStep "Running autoreconf"
   exitCode <- system $ "cd " ++ sourceDir ++ " && autoreconf -i"
   case exitCode of
@@ -162,20 +166,24 @@ buildAutoconf config pkg sourceDir encirclement = do
       logFail $ "Configure failed for " ++ pkgName pkg
       exitFailure
   
-  compileMake config pkg sourceDir
-  installMake pkg sourceDir
+  compileMakeWithFlags config pkg sourceDir
+  installMake pkg sourceDir encirclement
 
 buildMake :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
 buildMake config pkg sourceDir encirclement = do
-  logSubStep $ "Configuring (Makefile) " ++ pkgName pkg
-  compileMake config pkg sourceDir
-  let installCmd = "cd " ++ sourceDir ++ " && make install PREFIX=" ++ encirclement
-  exitCode <- system installCmd
+  logSubStep $ "Compiling (Makefile) " ++ pkgName pkg
+  let makeCmd = "cd " ++ sourceDir ++ " && make " ++ buildFlags config ++ " CC=gcc CFLAGS='-O " ++ ldFlags config ++ "'"
+  exitCode <- system makeCmd
   case exitCode of
-    ExitSuccess -> logOK $ "Installed " ++ pkgName pkg
+    ExitSuccess -> logOK $ "Compiled " ++ pkgName pkg
     _ -> do
-      logFail $ "Install failed for " ++ pkgName pkg
+      logFail $ "Compilation failed for " ++ pkgName pkg
       exitFailure
+  
+  logSubStep "Installing binaries"
+  system $ "mkdir -p " ++ encirclement ++ "/bin"
+  system $ "find " ++ sourceDir ++ " -maxdepth 1 -type f -executable ! -name '*.c' ! -name '*.h' -exec cp {} " ++ encirclement ++ "/bin/ \\;"
+  logOK $ "Installed " ++ pkgName pkg
 
 buildMeson :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
 buildMeson config pkg sourceDir encirclement = do
@@ -217,24 +225,27 @@ compileMake config pkg sourceDir = do
       logFail $ "Compilation failed for " ++ pkgName pkg
       exitFailure
 
-installMake :: Package -> FilePath -> IO ()
-installMake pkg sourceDir = do
+compileMakeWithFlags :: SystemConfig -> Package -> FilePath -> IO ()
+compileMakeWithFlags config pkg sourceDir = do
+  logSubStep $ "Compiling " ++ pkgName pkg
+  let makeCmd = "cd " ++ sourceDir ++ " && make " ++ buildFlags config
+  exitCode <- system makeCmd
+  case exitCode of
+    ExitSuccess -> logOK $ "Compiled " ++ pkgName pkg
+    _ -> do
+      logFail $ "Compilation failed for " ++ pkgName pkg
+      exitFailure
+
+installMake :: Package -> FilePath -> FilePath -> IO ()
+installMake pkg sourceDir encirclement = do
   logSubStep "Installing"
-  let installCmd = "cd " ++ sourceDir ++ " && make install"
+  let installCmd = "cd " ++ sourceDir ++ " && make install DESTDIR=" ++ encirclement
   exitCode <- system installCmd
   case exitCode of
     ExitSuccess -> return ()
     _ -> do
       logFail $ "Installation failed for " ++ pkgName pkg
       exitFailure
-
-resolveDependencies :: [Package] -> [Package]
-resolveDependencies [] = []
-resolveDependencies pkgs = nub $ pkgs ++ concatMap (resolveDependencies . pkgDeps) pkgs
-  where
-    resolveDependencies :: [String] -> [Package]
-    resolveDependencies depNames = 
-      [pkg | pkg <- pkgs, pkgName pkg `elem` depNames]
 
 checkConflicts :: SystemConfig -> [Package] -> [String]
 checkConflicts config pkgs = 
