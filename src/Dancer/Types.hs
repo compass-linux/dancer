@@ -22,7 +22,7 @@ data SystemConfig = SystemConfig
   { hostname :: String
   , libc :: LibC
   , coreutils :: Coreutils
-  , packages :: [Package]
+  , packages :: [String]
   , useFlags :: [String]
   , buildFlags :: String
   , ldFlags :: String
