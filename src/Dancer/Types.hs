@@ -10,7 +10,7 @@ data Package = Package
   , pkgVersion :: String
   , pkgDeps :: [String]
   , pkgUseFlags :: [String]
-  } deriving (Show, Generic)
+  } deriving (Show, Eq, Generic)
 
 data SystemConfig = SystemConfig
   { hostname :: String
@@ -19,7 +19,7 @@ data SystemConfig = SystemConfig
   , packages :: [Package]
   , useFlags :: [String]
   , buildFlags :: String
-  } deriving (Show, Generic)
+  } deriving (Show, Eq, Generic)
 
 data LibC = Glibc | Musl deriving (Show, Eq)
 data Coreutils = GNU | Busybox deriving (Show, Eq)

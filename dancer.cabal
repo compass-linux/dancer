@@ -3,8 +3,7 @@ name: dancer
 version: 0.1.0.0
 license: GPL-3.0-only
 author: confucius40
-category: System --I AM RECURSION!! I AM RECURSION!!! I AM RECURSION!!!!!
-
+category: System
 common warnings
   ghc-options: -Wall -Wcompat
 
@@ -12,10 +11,11 @@ executable dancer
   import: warnings
   main-is: Main.hs
   other-modules:
-    Dancer.Config
-    Dancer.Packages
-    Dancer.Build
     Dancer.CLI
+    Dancer.Config
+    Dancer.Build
+    Dancer.Types
+    Dancer.Logging
   hs-source-dirs: src
   default-language: Haskell2010
   build-depends:
