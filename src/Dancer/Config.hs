@@ -1,19 +1,19 @@
 module Dancer.Config where
 
-import System.FilePath ((</>), takeDirectory)
-import System.Directory (doesFileExist, removeFile, listDirectory)
+import System.FilePath ((</>), takeFileName, takeDirectory)
+import System.Directory (doesFileExist, removeFile, createDirectoryIfMissing, doesDirectoryExist, removeDirectoryRecursive)
 import System.Process (readProcess, system)
 import System.Exit (exitFailure, ExitCode(..))
 import Data.List (isInfixOf, intercalate)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, listToMaybe)
 import Dancer.Types
 import Dancer.Logging
 
 defaultConfigPath :: FilePath
 defaultConfigPath = "/etc/dancer/system.hs"
 
-repoPath :: FilePath
-repoPath = "/var/lib/dancer/db"
+reposDir :: FilePath
+reposDir = "/var/lib/dancer/repos"
 
 scratchDir :: FilePath
 scratchDir = "/tmp/dancer-pkg-build"
@@ -65,29 +65,70 @@ cleanup = do
   system $ "rm -rf " ++ scratchDir
   return ()
 
-resolvePackagesByName :: [String] -> IO [Package]
-resolvePackagesByName pkgNames = do
-  logSubStep "Resolving packages from repository"
-  packages <- mapM resolvePackageByName pkgNames
+setupRepositories :: [(String, String)] -> IO [FilePath]
+setupRepositories repos = do
+  logSubStep "Setting up repositories"
+  createDirectoryIfMissing True reposDir
+  repoPaths <- mapM (uncurry (fetchRepo reposDir)) repos
+  logOK $ "Repositories ready"
+  return repoPaths
+
+fetchRepo :: FilePath -> String -> String -> IO FilePath
+fetchRepo baseDir url branch = do
+  let repoName = getRepoName url
+  let repoPath = baseDir </> repoName
+  
+  exists <- doesDirectoryExist repoPath
+  
+  if exists
+    then do
+      logProgress $ "Updating repository " ++ repoName
+      system $ "cd " ++ repoPath ++ " && git pull origin " ++ branch
+      return repoPath
+    else do
+      logProgress $ "Cloning repository " ++ repoName
+      exitCode <- system $ "git clone --branch " ++ branch ++ " " ++ url ++ " " ++ repoPath
+      case exitCode of
+        ExitSuccess -> do
+          logOK $ "Cloned " ++ repoName
+          return repoPath
+        _ -> do
+          logFail $ "Failed to clone " ++ url
+          error $ "Git clone failed for " ++ url
+
+getRepoName :: String -> String
+getRepoName url =
+  let base = takeFileName (dropEnd 4 url)
+  in if null base then "pkgs" else base
+  where
+    dropEnd n xs = take (length xs - n) xs
+
+resolvePackagesByNameFromRepos :: [String] -> [FilePath] -> IO [Package]
+resolvePackagesByNameFromRepos pkgNames repos = do
+  packages <- mapM (`resolvePackageByName` repos) pkgNames
   let resolved = catMaybes packages
-  logOK $ "Resolved " ++ show (length resolved) ++ " packages"
   return resolved
 
-resolvePackageByName :: String -> IO (Maybe Package)
-resolvePackageByName pkgName = do
+resolvePackageByName :: String -> [FilePath] -> IO (Maybe Package)
+resolvePackageByName pkgName repoPaths = do
+  results <- mapM (tryLoadPackage pkgName) repoPaths
+  case listToMaybe [p | Just p <- results] of
+    Just pkg -> return (Just pkg)
+    Nothing -> do
+      logWarn $ "Package not found in any repository: " ++ pkgName
+      return Nothing
+
+tryLoadPackage :: String -> FilePath -> IO (Maybe Package)
+tryLoadPackage pkgName repoPath = do
   let parts = splitOn "/" pkgName
   case parts of
     [cat, pkg] -> do
       let pkgFile = repoPath </> cat </> pkg </> "package.hs"
       exists <- doesFileExist pkgFile
-      if not exists
-        then do
-          logWarn $ "Package not found: " ++ pkgName
-          return Nothing
-        else loadPackageDefinition pkgFile pkgName
-    _ -> do
-      logWarn $ "Invalid package name: " ++ pkgName
-      return Nothing
+      if exists
+        then loadPackageDefinition pkgFile pkgName
+        else return Nothing
+    _ -> return Nothing
 
 loadPackageDefinition :: FilePath -> String -> IO (Maybe Package)
 loadPackageDefinition pkgFile pkgName = do
@@ -135,3 +176,4 @@ printConfig config = do
   putStrLn $ "  Build Flags: " ++ buildFlags config
   putStrLn $ "  Packages: " ++ show (length (packages config))
   putStrLn $ "  Use Flags: " ++ show (useFlags config)
+  putStrLn $ "  Repositories: " ++ show (length (repoSources config))

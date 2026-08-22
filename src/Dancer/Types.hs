@@ -11,13 +11,6 @@ data Package = Package
   , buildMode :: BuildMode
   } deriving (Show, Read, Eq, Generic)
 
-data BuildMode
-  = Autotools
-  | Autoconf
-  | Make
-  | Meson
-  deriving (Show, Read, Eq, Generic)
-
 data SystemConfig = SystemConfig
   { hostname :: String
   , libc :: LibC
@@ -26,11 +19,19 @@ data SystemConfig = SystemConfig
   , useFlags :: [String]
   , buildFlags :: String
   , ldFlags :: String
+  , repoSources :: [(String, String)]
   } deriving (Show, Read, Eq, Generic)
 
 data PackageSource
   = GitSource String String
   | LocalSource String
+  deriving (Show, Read, Eq, Generic)
+
+data BuildMode
+  = Autotools
+  | Autoconf
+  | Make
+  | Meson
   deriving (Show, Read, Eq, Generic)
 
 data LibC = Glibc | Musl deriving (Show, Read, Eq, Generic)

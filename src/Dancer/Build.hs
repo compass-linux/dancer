@@ -53,8 +53,11 @@ buildSystem config fromScratch = do
   logSubStep "Setting up build directories"
   logOK "Build directories ready"
   
-  logSubStep "Loading packages from repository"
-  resolvedPkgs <- Config.resolvePackagesByName (packages config)
+  logSubStep "Setting up repositories"
+  repos <- Config.setupRepositories (repoSources config)
+  
+  logSubStep "Resolving packages from repositories"
+  resolvedPkgs <- Config.resolvePackagesByNameFromRepos (packages config) repos
   logOK $ "Loaded " ++ show (length resolvedPkgs) ++ " packages"
   
   logSubStep "Checking for package conflicts"
@@ -259,6 +262,8 @@ checkConflicts config pkgs =
 createGeneration :: SystemConfig -> IO Int
 createGeneration config = do
   let genList = generationsDir </> "generations"
+  createDirectoryIfMissing True generationsDir
+  
   exists <- doesFileExist genList
   
   nextGen <- if exists
@@ -270,7 +275,7 @@ createGeneration config = do
       return 1
   
   let entry = "Generation " ++ show nextGen ++ ": " ++ hostname config
-  appendFile genList (entry ++ "\n")
+  system $ "echo '" ++ entry ++ "' >> " ++ genList
   
   return nextGen
 
