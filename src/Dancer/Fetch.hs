@@ -3,7 +3,7 @@ module Dancer.Fetch where
 import System.Process (callProcess, readProcess, system)
 import System.Exit (ExitCode(..))
 import System.Directory (doesDirectoryExist, createDirectoryIfMissing, removeDirectoryRecursive)
-import System.FilePath ((</>))
+import System.FilePath ((</>), takeDirectory)
 import Data.List (isPrefixOf)
 import Dancer.Types
 import Dancer.Logging
@@ -50,9 +50,9 @@ fetchGitSource pkg url branch cacheDir = do
 
 cloneGitRepo :: String -> String -> FilePath -> Package -> IO FilePath
 cloneGitRepo url branch cacheDir pkg = do
-  createDirectoryIfMissing True (take (length cacheDir - length (pkgVersion pkg) - 1) cacheDir)
+  createDirectoryIfMissing True (takeDirectory cacheDir)
   
-  let gitCmd = "git clone --depth 1 --branch " ++ branch ++ " " ++ url ++ " " ++ cacheDir
+  let gitCmd = "git clone --branch " ++ branch ++ " " ++ url ++ " " ++ cacheDir
   exitCode <- system gitCmd
   
   case exitCode of

@@ -31,4 +31,5 @@ executable dancer
     yaml,
     mtl,
     transformers,
-    unix
+    unix,
+    random

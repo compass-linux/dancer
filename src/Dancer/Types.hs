@@ -1,7 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Dancer.Types where
 import GHC.Generics (Generic)
-import Data.Text (Text)
 
 data Package = Package
   { pkgName :: String
@@ -9,7 +8,15 @@ data Package = Package
   , pkgDeps :: [String]
   , pkgUseFlags :: [String]
   , pkgSource :: PackageSource
-  } deriving (Show, Eq, Generic)
+  , buildMode :: BuildMode
+  } deriving (Show, Read, Eq, Generic)
+
+data BuildMode
+  = Autotools
+  | Autoconf
+  | Make
+  | Meson
+  deriving (Show, Read, Eq, Generic)
 
 data SystemConfig = SystemConfig
   { hostname :: String
@@ -18,12 +25,13 @@ data SystemConfig = SystemConfig
   , packages :: [Package]
   , useFlags :: [String]
   , buildFlags :: String
-  } deriving (Show, Eq, Generic)
+  , ldFlags :: String
+  } deriving (Show, Read, Eq, Generic)
 
 data PackageSource
   = GitSource String String
   | LocalSource String
-  deriving (Show, Eq, Generic)
+  deriving (Show, Read, Eq, Generic)
 
-data LibC = Glibc | Musl deriving (Show, Eq, Generic)
-data Coreutils = GNU | Busybox deriving (Show, Eq, Generic)
+data LibC = Glibc | Musl deriving (Show, Read, Eq, Generic)
+data Coreutils = GNU | Busybox deriving (Show, Read, Eq, Generic)

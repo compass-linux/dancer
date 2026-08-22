@@ -1,15 +1,22 @@
 module Dancer.Config where
 
-import System.FilePath ((</>))
-import System.Directory (doesFileExist)
-import System.Process (readProcess)
-import System.Exit (exitFailure)
-import Data.List (isInfixOf)
+import System.FilePath ((</>), takeDirectory)
+import System.Directory (doesFileExist, removeFile, listDirectory)
+import System.Process (readProcess, system)
+import System.Exit (exitFailure, ExitCode(..))
+import Data.List (isInfixOf, intercalate)
+import Data.Maybe (catMaybes)
 import Dancer.Types
 import Dancer.Logging
 
 defaultConfigPath :: FilePath
 defaultConfigPath = "/etc/dancer/system.hs"
+
+repoPath :: FilePath
+repoPath = "/var/lib/dancer/db"
+
+scratchDir :: FilePath
+scratchDir = "/tmp/dancer-pkg-build"
 
 loadConfig :: FilePath -> IO SystemConfig
 loadConfig path = do
@@ -20,34 +27,98 @@ loadConfig path = do
       exitFailure
     else do
       logSubStep $ "Loading config from " ++ path
-      configSource <- readFile path
-      config <- compileAndRunConfig path configSource
+      config <- compileAndRunConfig path
       logOK "Config loaded"
       return config
 
-compileAndRunConfig :: FilePath -> String -> IO SystemConfig
-compileAndRunConfig path source = do
-  logSubStep "Compiling config"
-  -- this is a placeholder; real implementation would use GHC API or runhaskell
-  
-  -- for now, return a dummy config
-  -- in production, we'd:
-  -- 1. write source to temp file
-  -- 2. compile with ghc or runhaskell
-  -- 3. execute and capture the SystemConfig
-  -- 4. parse the result
-  
-  return defaultSystemConfig
+compileAndRunConfig :: FilePath -> IO SystemConfig
+compileAndRunConfig path = do
+  logSubStep "Compiling config with GHC"
 
-defaultSystemConfig :: SystemConfig
-defaultSystemConfig = SystemConfig
-  { hostname = "compass"
-  , libc = Glibc
-  , coreutils = GNU
-  , packages = []
-  , useFlags = []
-  , buildFlags = "-j4"
-  }
+  system $ "mkdir -p " ++ scratchDir
+  system $ "cp " ++ path ++ " " ++ scratchDir ++ "/system.hs"
+
+  let scratchSource = scratchDir ++ "/system.hs"
+      binaryPath = scratchDir ++ "/system.bin"
+
+  exitCode <- system $ "ghc -v0 -i/home/confucius/compass/dancer/src -outputdir " ++ scratchDir ++ " -o " ++ binaryPath ++ " " ++ scratchSource
+
+  case exitCode of
+    ExitSuccess -> do
+      logOK "Config compiled"
+      logSubStep "Executing config"
+      output <- readProcess binaryPath [] ""
+      cleanup
+      case reads output of
+        [(config, _)] -> do
+          logOK "Config parsed"
+          return config
+        _ -> do
+          logFail "Failed to parse config output"
+          exitFailure
+    _ -> do
+      logFail $ "GHC compilation failed for " ++ path
+      exitFailure
+
+cleanup :: IO ()
+cleanup = do
+  system $ "rm -rf " ++ scratchDir
+  return ()
+
+resolvePackagesByName :: [String] -> IO [Package]
+resolvePackagesByName pkgNames = do
+  logSubStep "Resolving packages from repository"
+  packages <- mapM resolvePackageByName pkgNames
+  let resolved = catMaybes packages
+  logOK $ "Resolved " ++ show (length resolved) ++ " packages"
+  return resolved
+
+resolvePackageByName :: String -> IO (Maybe Package)
+resolvePackageByName pkgName = do
+  let parts = splitOn "/" pkgName
+  case parts of
+    [cat, pkg] -> do
+      let pkgFile = repoPath </> cat </> pkg </> "package.hs"
+      exists <- doesFileExist pkgFile
+      if not exists
+        then do
+          logWarn $ "Package not found: " ++ pkgName
+          return Nothing
+        else loadPackageDefinition pkgFile pkgName
+    _ -> do
+      logWarn $ "Invalid package name: " ++ pkgName
+      return Nothing
+
+loadPackageDefinition :: FilePath -> String -> IO (Maybe Package)
+loadPackageDefinition pkgFile pkgName = do
+  logProgress $ "Loading " ++ pkgName
+  
+  let moduleFile = scratchDir ++ "/LoadPkg.hs"
+  let binaryPath = scratchDir ++ "/loadpkg.bin"
+  
+  system $ "mkdir -p " ++ scratchDir
+  system $ "cp " ++ pkgFile ++ " " ++ moduleFile
+  
+  exitCode <- system $ "ghc -v0 -i/home/confucius/compass/dancer/src -outputdir " ++ scratchDir ++ " -e 'print pkg' -o " ++ binaryPath ++ " " ++ moduleFile ++ " 2>/dev/null"
+  
+  case exitCode of
+    ExitSuccess -> do
+      output <- readProcess binaryPath [] ""
+      case reads output of
+        [(package, _)] -> do
+          logOK $ "Loaded " ++ pkgName
+          return (Just package)
+        _ -> do
+          logWarn $ "Failed to parse package from " ++ pkgName
+          return Nothing
+    _ -> do
+      logWarn $ "Failed to compile " ++ pkgName
+      return Nothing
+
+splitOn :: String -> String -> [String]
+splitOn delim str = case break (== head delim) str of
+  (a, []) -> [a]
+  (a, _:b) -> a : splitOn delim b
 
 validateConfig :: SystemConfig -> Either String ()
 validateConfig config

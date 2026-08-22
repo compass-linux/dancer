@@ -2,7 +2,6 @@ module Dancer.CLI where
 
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
-import Data.List (isPrefixOf)
 import Dancer.Types
 import Dancer.Logging
 import qualified Dancer.Config as Config
@@ -22,21 +21,13 @@ handleRebuild :: [String] -> IO ()
 handleRebuild args
   | "--from-scratch" `elem` args = do
       logStep "Starting cold rebuild"
-      logSubStep "Loading system config"
-      -- config <- Config.loadConfig "/etc/dancer/system.hs"
-      logSubStep "Resolving dependencies"
-      logSubStep "Preparing build environment"
-      logSubStep "Building packages"
-      logProgress "Compiling..."
-      logOK "All packages built successfully"
-      logStep "Rebuild complete"
+      config <- Config.loadConfig Config.defaultConfigPath
+      Build.buildSystem config True
       exitSuccess
   | otherwise = do
       logStep "Starting incremental rebuild"
-      logSubStep "Loading system config"
-      logSubStep "Checking for changes"
-      logSubStep "Building changed packages"
-      logOK "Incremental rebuild complete"
+      config <- Config.loadConfig Config.defaultConfigPath
+      Build.rebuildIncremental config
       exitSuccess
 
 handleFetch :: IO ()
@@ -64,7 +55,7 @@ printUsage = putStr $ unlines
   , ""
   , "Commands:"
   , "  rebuild [--from-scratch]     Rebuild system (incremental by default)"
-  , "  home rebuild                 Rebuild user home"
+  , "  home rebuild                 Rebuild user homes"
   , "  fetch                         Fetch latest package definitions"
   , ""
   ]

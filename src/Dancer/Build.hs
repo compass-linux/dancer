@@ -3,7 +3,8 @@ module Dancer.Build where
 import System.Process (callProcess, readProcess, system)
 import System.Exit (ExitCode(..), exitFailure, exitSuccess)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
-import System.FilePath ((</>))
+import System.FilePath ((</>), takeDirectory)
+import System.Random (randomRIO)
 import Data.List (nub, intercalate)
 import Dancer.Types
 import Dancer.Logging
@@ -18,14 +19,37 @@ buildDbDir = "/var/lib/dancer/db"
 generationsDir :: FilePath
 generationsDir = "/var/lib/dancer/generations"
 
+encirclementsDir :: FilePath
+encirclementsDir = "/var/lib/dancer/encirclements"
+
+wordList :: [String]
+wordList =
+  [ "amber", "basalt", "cinder", "drift", "ember", "flint", "granite"
+  , "hollow", "ironwood", "jasper", "kestrel", "lantern", "marrow"
+  , "nettle", "obsidian", "pallor", "quartz", "ridge", "slate"
+  , "thistle", "umber", "vellum", "wren", "yarrow", "zephyr"
+  ]
+
+randomWord :: IO String
+randomWord = do
+  idx <- randomRIO (0, length wordList - 1)
+  return (wordList !! idx)
+
+newEncirclementPath :: IO FilePath
+newEncirclementPath = do
+  w1 <- randomWord
+  w2 <- randomWord
+  w3 <- randomWord
+  return $ encirclementsDir </> (w1 ++ "-" ++ w2 ++ "-" ++ w3)
+
 buildSystem :: SystemConfig -> Bool -> IO ()
 buildSystem config fromScratch = do
   logStep "Building system"
   
-  logSubStep "Setting up build directories"
   createDirectoryIfMissing True buildCacheDir
   createDirectoryIfMissing True buildDbDir
   createDirectoryIfMissing True generationsDir
+  logSubStep "Setting up build directories"
   logOK "Build directories ready"
   
   logSubStep "Resolving package dependencies"
@@ -92,12 +116,6 @@ buildPackage :: SystemConfig -> Package -> IO ()
 buildPackage config pkg = do
   logProgress $ "Building " ++ pkgName pkg ++ " (" ++ pkgVersion pkg ++ ")"
   
-  let buildEnv = 
-        [ ("MAKEFLAGS", buildFlags config)
-        , ("CFLAGS", "-O2 -march=native")
-        ]
-      installPrefix = "/usr/local"
-  
   let workDir = buildCacheDir </> pkgName pkg </> pkgVersion pkg
   createDirectoryIfMissing True workDir
   
@@ -107,33 +125,91 @@ buildPackage config pkg = do
   
   let appliedFlags = filter (`elem` useFlags config) (pkgUseFlags pkg)
   if not (null appliedFlags)
-    then do
-      logSubStep $ "Applied USE flags: " ++ intercalate ", " appliedFlags
+    then logSubStep $ "Applied USE flags: " ++ intercalate ", " appliedFlags
     else return ()
   
-  logSubStep $ "Configuring " ++ pkgName pkg
-  configurePackage config pkg sourceDir workDir installPrefix
+  encirclement <- newEncirclementPath
+  createDirectoryIfMissing True encirclement
+  logSubStep $ "Encirclement: " ++ encirclement
   
-  logSubStep $ "Compiling " ++ pkgName pkg
-  compilePackage config pkg workDir
+  logSubStep $ "Building with " ++ show (buildMode pkg)
+  case buildMode pkg of
+    Autotools -> buildAutotools config pkg sourceDir encirclement
+    Autoconf -> buildAutoconf config pkg sourceDir encirclement
+    Make -> buildMake config pkg sourceDir encirclement
+    Meson -> buildMeson config pkg sourceDir encirclement
   
-  logSubStep $ "Installing " ++ pkgName pkg
-  installPackage pkg workDir
-  
-  logOK $ pkgName pkg ++ " built and installed"
+  logOK $ pkgName pkg ++ " built into " ++ encirclement
 
-configurePackage :: SystemConfig -> Package -> FilePath -> FilePath -> FilePath -> IO ()
-configurePackage config pkg sourceDir workDir prefix = do
-  let configCmd = "cd " ++ sourceDir ++ " && ./configure --prefix=" ++ prefix
+buildAutotools :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
+buildAutotools config pkg sourceDir encirclement = do
+  logSubStep "Running autoreconf"
+  exitCode <- system $ "cd " ++ sourceDir ++ " && autoreconf -i"
+  case exitCode of
+    ExitSuccess -> logOK "autoreconf done"
+    _ -> logWarn "autoreconf failed, continuing anyway"
+  
+  buildAutoconf config pkg sourceDir encirclement
+
+buildAutoconf :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
+buildAutoconf config pkg sourceDir encirclement = do
+  logSubStep $ "Configuring " ++ pkgName pkg
+  let configCmd = "cd " ++ sourceDir ++ " && ./configure --prefix=" ++ encirclement
   exitCode <- system configCmd
   case exitCode of
     ExitSuccess -> logOK $ "Configured " ++ pkgName pkg
     _ -> do
-      logWarn $ "Configure step skipped for " ++ pkgName pkg ++ " (no configure script)"
+      logFail $ "Configure failed for " ++ pkgName pkg
+      exitFailure
+  
+  compileMake config pkg sourceDir
+  installMake pkg sourceDir
 
-compilePackage :: SystemConfig -> Package -> FilePath -> IO ()
-compilePackage config pkg workDir = do
-  let makeCmd = "cd " ++ workDir ++ " && make " ++ buildFlags config
+buildMake :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
+buildMake config pkg sourceDir encirclement = do
+  logSubStep $ "Configuring (Makefile) " ++ pkgName pkg
+  compileMake config pkg sourceDir
+  let installCmd = "cd " ++ sourceDir ++ " && make install PREFIX=" ++ encirclement
+  exitCode <- system installCmd
+  case exitCode of
+    ExitSuccess -> logOK $ "Installed " ++ pkgName pkg
+    _ -> do
+      logFail $ "Install failed for " ++ pkgName pkg
+      exitFailure
+
+buildMeson :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
+buildMeson config pkg sourceDir encirclement = do
+  logSubStep $ "Configuring (Meson) " ++ pkgName pkg
+  let mesonCmd = "cd " ++ sourceDir ++ " && meson setup builddir --prefix=" ++ encirclement
+  exitCode <- system mesonCmd
+  case exitCode of
+    ExitSuccess -> logOK "Meson configured"
+    _ -> do
+      logFail $ "Meson configuration failed for " ++ pkgName pkg
+      exitFailure
+  
+  logSubStep "Compiling (Meson)"
+  let compileCmd = "cd " ++ sourceDir ++ "/builddir && ninja " ++ buildFlags config
+  exitCode <- system compileCmd
+  case exitCode of
+    ExitSuccess -> logOK $ "Compiled " ++ pkgName pkg
+    _ -> do
+      logFail $ "Compilation failed for " ++ pkgName pkg
+      exitFailure
+  
+  logSubStep "Installing (Meson)"
+  let installCmd = "cd " ++ sourceDir ++ "/builddir && ninja install"
+  exitCode <- system installCmd
+  case exitCode of
+    ExitSuccess -> logOK $ "Installed " ++ pkgName pkg
+    _ -> do
+      logFail $ "Install failed for " ++ pkgName pkg
+      exitFailure
+
+compileMake :: SystemConfig -> Package -> FilePath -> IO ()
+compileMake config pkg sourceDir = do
+  logSubStep $ "Compiling " ++ pkgName pkg
+  let makeCmd = "cd " ++ sourceDir ++ " && make " ++ buildFlags config
   exitCode <- system makeCmd
   case exitCode of
     ExitSuccess -> logOK $ "Compiled " ++ pkgName pkg
@@ -141,9 +217,10 @@ compilePackage config pkg workDir = do
       logFail $ "Compilation failed for " ++ pkgName pkg
       exitFailure
 
-installPackage :: Package -> FilePath -> IO ()
-installPackage pkg workDir = do
-  let installCmd = "cd " ++ workDir ++ " && make install"
+installMake :: Package -> FilePath -> IO ()
+installMake pkg sourceDir = do
+  logSubStep "Installing"
+  let installCmd = "cd " ++ sourceDir ++ " && make install"
   exitCode <- system installCmd
   case exitCode of
     ExitSuccess -> return ()
@@ -164,7 +241,7 @@ checkConflicts config pkgs =
   case (libc config, coreutils config) of
     (Glibc, GNU) -> []
     (Glibc, Busybox) -> []
-    (Musl, Busybox) -> [] 
+    (Musl, Busybox) -> []
     (Musl, GNU) -> ["GNU coreutils may not work well with musl libc"]
     _ -> []
 
@@ -190,7 +267,6 @@ rebuildIncremental :: SystemConfig -> IO ()
 rebuildIncremental config = do
   logStep "Incremental rebuild"
   logSubStep "Checking for changes"
-  
   logOK "Incremental rebuild complete"
 
 rebuildFromScratch :: SystemConfig -> IO ()
