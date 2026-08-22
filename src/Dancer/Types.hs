@@ -1,7 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
-
 module Dancer.Types where
-
 import GHC.Generics (Generic)
 import Data.Text (Text)
 
@@ -22,10 +20,10 @@ data SystemConfig = SystemConfig
   , buildFlags :: String
   } deriving (Show, Eq, Generic)
 
-  data PackageSource
+data PackageSource
   = GitSource String String
   | LocalSource String
   deriving (Show, Eq, Generic)
 
-data LibC = Glibc | Musl deriving (Show, Eq)
-data Coreutils = GNU | Busybox deriving (Show, Eq)
+data LibC = Glibc | Musl deriving (Show, Eq, Generic)
+data Coreutils = GNU | Busybox deriving (Show, Eq, Generic)
