@@ -9,6 +9,7 @@ import Data.List (nub, intercalate)
 import Dancer.Types
 import Dancer.Logging
 import Dancer.Fetch (fetchPackageSource)
+import Dancer.UseFlags (resolveUseFlags, toConfigureArgs, toMakeDefines, logResolvedFlags)
 import qualified Dancer.Config as Config
 
 buildCacheDir :: FilePath
@@ -127,10 +128,7 @@ buildPackage config pkg = do
   sourceDir <- fetchPackageSource pkg
   logOK $ "Source ready at " ++ sourceDir
   
-  let appliedFlags = filter (`elem` useFlags config) (pkgUseFlags pkg)
-  if not (null appliedFlags)
-    then logSubStep $ "Applied USE flags: " ++ intercalate ", " appliedFlags
-    else return ()
+  logResolvedFlags config pkg
   
   encirclement <- newEncirclementPath
   createDirectoryIfMissing True encirclement
@@ -161,7 +159,9 @@ buildAutotools config pkg sourceDir encirclement = do
 buildAutoconf :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
 buildAutoconf config pkg sourceDir encirclement = do
   logSubStep $ "Configuring " ++ pkgName pkg
+  let flagArgs = toConfigureArgs config pkg
   let configCmd = "cd " ++ sourceDir ++ " && ./configure --prefix=" ++ encirclement
+                    ++ (if null flagArgs then "" else " " ++ flagArgs)
   exitCode <- system configCmd
   case exitCode of
     ExitSuccess -> logOK $ "Configured " ++ pkgName pkg
@@ -175,7 +175,9 @@ buildAutoconf config pkg sourceDir encirclement = do
 buildMake :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
 buildMake config pkg sourceDir encirclement = do
   logSubStep $ "Compiling (Makefile) " ++ pkgName pkg
-  let makeCmd = "cd " ++ sourceDir ++ " && make " ++ buildFlags config ++ " CC=gcc CFLAGS='-O " ++ ldFlags config ++ "'"
+  let useDefines = toMakeDefines config pkg
+  let cflags = "-O " ++ ldFlags config ++ (if null useDefines then "" else " " ++ useDefines)
+  let makeCmd = "cd " ++ sourceDir ++ " && make " ++ buildFlags config ++ " CC=gcc CFLAGS='" ++ cflags ++ "'"
   exitCode <- system makeCmd
   case exitCode of
     ExitSuccess -> logOK $ "Compiled " ++ pkgName pkg

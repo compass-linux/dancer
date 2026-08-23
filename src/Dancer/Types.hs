@@ -17,6 +17,7 @@ data SystemConfig = SystemConfig
   , coreutils :: Coreutils
   , packages :: [String]
   , useFlags :: [String]
+  , packageUseFlags :: [(String, [String])]
   , buildFlags :: String
   , ldFlags :: String
   , repoSources :: [(String, String)]
