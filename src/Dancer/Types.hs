@@ -6,10 +6,18 @@ data Package = Package
   { pkgName :: String
   , pkgVersion :: String
   , pkgDeps :: [String]
-  , pkgUseFlags :: [String]
+  , pkgUseFlags :: [UseFlagSpec]
   , pkgSource :: PackageSource
   , buildMode :: BuildMode
   } deriving (Show, Read, Eq, Generic)
+
+data UseFlagSpec = UseFlagSpec
+  { flagName :: String
+  , flagKind :: FlagKind
+  } deriving (Show, Read, Eq, Generic)
+
+data FlagKind = EnableDisable | WithWithout
+  deriving (Show, Read, Eq, Generic)
 
 data SystemConfig = SystemConfig
   { hostname :: String
@@ -37,3 +45,9 @@ data BuildMode
 
 data LibC = Glibc | Musl deriving (Show, Read, Eq, Generic)
 data Coreutils = GNU | Busybox deriving (Show, Read, Eq, Generic)
+
+ed :: String -> UseFlagSpec
+ed name = UseFlagSpec name EnableDisable
+
+ww :: String -> UseFlagSpec
+ww name = UseFlagSpec name WithWithout

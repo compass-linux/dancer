@@ -18,6 +18,9 @@ reposDir = "/var/lib/dancer/repos"
 scratchDir :: FilePath
 scratchDir = "/tmp/dancer-pkg-build"
 
+dancerSrcDir :: FilePath
+dancerSrcDir = "/usr/lib/dancer/src"
+
 loadConfig :: FilePath -> IO SystemConfig
 loadConfig path = do
   exists <- doesFileExist path
@@ -41,7 +44,7 @@ compileAndRunConfig path = do
   let scratchSource = scratchDir ++ "/system.hs"
       binaryPath = scratchDir ++ "/system.bin"
 
-  exitCode <- system $ "ghc -v0 -i/home/confucius/compass/dancer/src -outputdir " ++ scratchDir ++ " -o " ++ binaryPath ++ " " ++ scratchSource
+  exitCode <- system $ "ghc -v0 -i" ++ dancerSrcDir ++ " -outputdir " ++ scratchDir ++ " -o " ++ binaryPath ++ " " ++ scratchSource
 
   case exitCode of
     ExitSuccess -> do
@@ -135,25 +138,18 @@ loadPackageDefinition pkgFile pkgName = do
   logProgress $ "Loading " ++ pkgName
   
   let moduleFile = scratchDir ++ "/LoadPkg.hs"
-  let binaryPath = scratchDir ++ "/loadpkg.bin"
   
   system $ "mkdir -p " ++ scratchDir
   system $ "cp " ++ pkgFile ++ " " ++ moduleFile
   
-  exitCode <- system $ "ghc -v0 -i/home/confucius/compass/dancer/src -outputdir " ++ scratchDir ++ " -e 'print pkg' -o " ++ binaryPath ++ " " ++ moduleFile ++ " 2>/dev/null"
+  output <- readProcess "ghc" ["-v0", "-i" ++ dancerSrcDir, "-outputdir", scratchDir, "-e", "print pkg", moduleFile] ""
   
-  case exitCode of
-    ExitSuccess -> do
-      output <- readProcess binaryPath [] ""
-      case reads output of
-        [(package, _)] -> do
-          logOK $ "Loaded " ++ pkgName
-          return (Just package)
-        _ -> do
-          logWarn $ "Failed to parse package from " ++ pkgName
-          return Nothing
+  case reads output of
+    [(package, _)] -> do
+      logOK $ "Loaded " ++ pkgName
+      return (Just package)
     _ -> do
-      logWarn $ "Failed to compile " ++ pkgName
+      logWarn $ "Failed to parse package from " ++ pkgName
       return Nothing
 
 splitOn :: String -> String -> [String]
