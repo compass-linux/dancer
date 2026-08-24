@@ -1,6 +1,6 @@
 module Dancer.UseFlags where
 
-import Data.List (nub, sort, isPrefixOf)
+import Data.List (nub, sort)
 import Dancer.Types
 import Dancer.Logging
 
@@ -9,6 +9,12 @@ parseFlag ('+':rest) = (True, rest)
 parseFlag ('-':rest) = (False, rest)
 parseFlag flag       = (True, flag)
 
+-- | resolve the effective, enabled USE flags for a single package.
+--
+-- order of precedence (lowest to highest):
+--   1. global useFlags in SystemConfig, restricted to flags the package
+--      actually declares support for (pkgUseFlags)
+--   2. per-package overrides from packageUseFlags, matched by pkgName
 resolveUseFlags :: SystemConfig -> Package -> [String]
 resolveUseFlags config pkg =
   let supported   = pkgUseFlags pkg
