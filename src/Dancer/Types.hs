@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 module Dancer.Types where
+
 import GHC.Generics (Generic)
 
 data Package = Package
@@ -13,10 +14,13 @@ data Package = Package
 
 data UseFlagSpec = UseFlagSpec
   { flagName :: String
+  , flagOption :: String
   , flagKind :: FlagKind
   } deriving (Show, Read, Eq, Generic)
 
-data FlagKind = EnableDisable | WithWithout
+data FlagKind
+  = EnableDisable
+  | WithWithout
   deriving (Show, Read, Eq, Generic)
 
 data SystemConfig = SystemConfig
@@ -43,11 +47,18 @@ data BuildMode
   | Meson
   deriving (Show, Read, Eq, Generic)
 
-data LibC = Glibc | Musl deriving (Show, Read, Eq, Generic)
-data Coreutils = GNU | Busybox deriving (Show, Read, Eq, Generic)
+data LibC
+  = Glibc
+  | Musl
+  deriving (Show, Read, Eq, Generic)
 
-ed :: String -> UseFlagSpec
-ed name = UseFlagSpec name EnableDisable
+data Coreutils
+  = GNU
+  | Busybox
+  deriving (Show, Read, Eq, Generic)
 
-ww :: String -> UseFlagSpec
-ww name = UseFlagSpec name WithWithout
+ed :: String -> String -> UseFlagSpec
+ed name option = UseFlagSpec name option EnableDisable
+
+ww :: String -> String -> UseFlagSpec
+ww name option = UseFlagSpec name option WithWithout

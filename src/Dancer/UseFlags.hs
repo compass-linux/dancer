@@ -1,66 +1,136 @@
 module Dancer.UseFlags where
 
-import Data.List (nub, sort)
+import Data.List (sortOn)
 import Dancer.Types
 import Dancer.Logging
 
 parseFlag :: String -> (Bool, String)
 parseFlag ('+':rest) = (True, rest)
 parseFlag ('-':rest) = (False, rest)
-parseFlag flag       = (True, flag)
+parseFlag flag = (True, flag)
 
--- | resolve the effective, enabled USE flags for a single package.
---
--- order of precedence (lowest to highest):
---   1. global useFlags in SystemConfig, restricted to flags the package
---      actually declares support for (pkgUseFlags)
---   2. per-package overrides from packageUseFlags, matched by pkgName
-resolveUseFlags :: SystemConfig -> Package -> [String]
+resolveUseFlags :: SystemConfig -> Package -> [UseFlagSpec]
 resolveUseFlags config pkg =
-  let supported   = map flagName (pkgUseFlags pkg)
-      globalOn    = [f | f <- useFlags config, f `elem` supported]
-      overrides   = maybe [] id (lookup (pkgName pkg) (packageUseFlags config))
-      applyOne enabled spec =
-        let (on, name) = parseFlag spec
-        in if name `notElem` supported
-             then enabled -- silently ignore unknown flag for this pkg
-             else if on
-                    then nub (name : enabled)
-                    else filter (/= name) enabled
-      resolved = foldl applyOne globalOn overrides
-  in sort (nub resolved)
+  let supported = pkgUseFlags pkg
+      global = useFlags config
+      overrides =
+        maybe [] id
+          (lookup (pkgName pkg) (packageUseFlags config))
 
-disabledFlags :: SystemConfig -> Package -> [String]
-disabledFlags config pkg =
-  let enabled = resolveUseFlags config pkg
-      
-  in [flagName f | f <- pkgUseFlags pkg, flagName f `notElem` enabled]
+      enabled = foldl applyFlag [] global
+
+  in foldl applyFlag enabled overrides
+
+  where
+    applyFlag :: [UseFlagSpec] -> String -> [UseFlagSpec]
+    applyFlag current spec =
+      let (enabledFlag, name) = parseFlag spec
+      in case findFlag name (pkgUseFlags pkg) of
+           Nothing ->
+             current
+
+           Just flag ->
+             if enabledFlag
+               then addFlag flag current
+               else removeFlag name current
+
+findFlag :: String -> [UseFlagSpec] -> Maybe UseFlagSpec
+findFlag name [] = Nothing
+findFlag name (flag:flags)
+  | flagName flag == name = Just flag
+  | otherwise = findFlag name flags
+
+addFlag :: UseFlagSpec -> [UseFlagSpec] -> [UseFlagSpec]
+addFlag flag flags =
+  flag : filter ((/= flagName flag) . flagName) flags
+
+removeFlag :: String -> [UseFlagSpec] -> [UseFlagSpec]
+removeFlag name =
+  filter ((/= name) . flagName)
+
+sortFlags :: [UseFlagSpec] -> [UseFlagSpec]
+sortFlags =
+  sortOn flagName
+
+enabledOptions :: SystemConfig -> Package -> [String]
+enabledOptions config pkg =
+  map flagArgument (sortFlags (resolveUseFlags config pkg))
+  where
+    flagArgument flag =
+      case flagKind flag of
+        EnableDisable ->
+          "--enable-" ++ flagOption flag
+
+        WithWithout ->
+          "--with-" ++ flagOption flag
+
+disabledOptions :: SystemConfig -> Package -> [String]
+disabledOptions config pkg =
+  let supported = pkgUseFlags pkg
+      enabled = resolveUseFlags config pkg
+      enabledNames = map flagName enabled
+  in map disabledArgument
+       [flag | flag <- supported, flagName flag `notElem` enabledNames]
+  where
+    disabledArgument flag =
+      case flagKind flag of
+        EnableDisable ->
+          "--disable-" ++ flagOption flag
+
+        WithWithout ->
+          "--without-" ++ flagOption flag
 
 toConfigureArgs :: SystemConfig -> Package -> String
 toConfigureArgs config pkg =
-  let enabled  = resolveUseFlags config pkg
-      disabled = disabledFlags config pkg
-      enableArgs  = map (\f -> "--enable-" ++ f) enabled
-      disableArgs = map (\f -> "--disable-" ++ f) disabled
-  in unwords (enableArgs ++ disableArgs)
+  unwords $
+    enabledOptions config pkg
+    ++ disabledOptions config pkg
 
 toMakeDefines :: SystemConfig -> Package -> String
 toMakeDefines config pkg =
-  let enabled = resolveUseFlags config pkg
-  in unwords (map (\f -> "-DUSE_" ++ mapUpper f) enabled)
+  unwords $
+    map makeDefine (sortFlags (resolveUseFlags config pkg))
   where
-    mapUpper = map toUpperChar
+    makeDefine flag =
+      "-DUSE_" ++ mapUpper (flagName flag)
+
+    mapUpper =
+      map toUpperChar
+
     toUpperChar c
-      | c >= 'a' && c <= 'z' = toEnum (fromEnum c - 32)
-      | otherwise            = c
+      | c >= 'a' && c <= 'z' =
+          toEnum (fromEnum c - 32)
+      | otherwise =
+          c
 
 logResolvedFlags :: SystemConfig -> Package -> IO ()
 logResolvedFlags config pkg = do
-  let enabled  = resolveUseFlags config pkg
-  let disabled = disabledFlags config pkg
-  if not (null enabled)
-    then logSubStep $ "USE flags enabled: " ++ unwords enabled
-    else return ()
-  if not (null disabled)
-    then logSubStep $ "USE flags disabled: " ++ unwords disabled
-    else return ()
+  let enabled = sortFlags (resolveUseFlags config pkg)
+      disabled =
+        let supported = pkgUseFlags pkg
+            enabledNames = map flagName enabled
+        in [flag | flag <- supported, flagName flag `notElem` enabledNames]
+
+  if null enabled
+    then return ()
+    else do
+      logSubStep "USE flags enabled:"
+      mapM_ logEnabled enabled
+
+  if null disabled
+    then return ()
+    else do
+      logSubStep "USE flags disabled:"
+      mapM_ logDisabled disabled
+
+  where
+    logEnabled flag =
+      logSubStep $
+        "  " ++ flagName flag
+        ++ " -> "
+        ++ flagOption flag
+
+    logDisabled flag =
+      logSubStep $
+        "  " ++ flagName flag
+        ++ " -> disabled"

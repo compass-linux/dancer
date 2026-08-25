@@ -13,8 +13,8 @@ main = do
   args <- getArgs
   case args of
     ["search", query] -> handleSearch query
-    ["uses", pkg]      -> handleUses pkg
-    _                  -> printUsage >> exitFailure
+    ["uses", pkg] -> handleUses pkg
+    _ -> printUsage >> exitFailure
 
 handleSearch :: String -> IO ()
 handleSearch query = do
@@ -56,12 +56,20 @@ handleUses pkgArg = do
               exitFailure
             Just pkg -> do
               putStrLn $ pkgName pkg ++ " (" ++ pkgVersion pkg ++ ")"
+
               if null (pkgUseFlags pkg)
                 then putStrLn "  No USE flags declared"
                 else do
                   putStrLn "  USE flags:"
-                  mapM_ (\(UseFlagSpec name kind) -> putStrLn ("    " ++ name)) (pkgUseFlags pkg)
+                  mapM_ showUseFlag (pkgUseFlags pkg)
+
               exitSuccess
+
+showUseFlag :: UseFlagSpec -> IO ()
+showUseFlag (UseFlagSpec name option kind) =
+  putStrLn $
+    "    " ++ name
+    ++ " [" ++ show kind ++ "] -> " ++ option
 
 printUsage :: IO ()
 printUsage = putStr $ unlines
