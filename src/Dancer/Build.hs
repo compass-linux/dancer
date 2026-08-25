@@ -6,10 +6,13 @@ import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath ((</>), takeDirectory)
 import System.Random (randomRIO)
 import Data.List (nub, intercalate)
+import Data.Maybe (catMaybes)
 import Dancer.Types
 import Dancer.Logging
 import Dancer.Fetch (fetchPackageSource)
 import Dancer.UseFlags (resolveUseFlags, toConfigureArgs, toMakeDefines, logResolvedFlags)
+import Dancer.Index (PackageIndex, buildIndex, resolvePackagePaths, searchIndex, lookupPackagePath)
+import Dancer.PackageLoader (loadPackage)
 import qualified Dancer.Config as Config
 
 buildCacheDir :: FilePath
@@ -57,19 +60,38 @@ buildSystem config fromScratch = do
   logSubStep "Setting up repositories"
   repos <- Config.setupRepositories (repoSources config)
   
-  logSubStep "Resolving packages from repositories"
-  resolvedPkgs <- Config.resolvePackagesByNameFromRepos (packages config) repos
-  logOK $ "Loaded " ++ show (length resolvedPkgs) ++ " packages"
+  logSubStep "Building package index"
+  index <- buildIndex repos
+  logOK "Package index ready"
+  
+  logSubStep "Resolving package paths from index"
+  let requestedNames = packages config
+  let pathResults = [(name, lookupPackagePath index name) | name <- requestedNames]
+  let found = [(name, path) | (name, Just path) <- pathResults]
+  
+  logOK $ "Found " ++ show (length found) ++ " of " ++ show (length requestedNames) ++ " packages"
+  
+  if length found /= length requestedNames
+    then do
+      let missing = [name | (name, Nothing) <- pathResults]
+      logWarn "Some packages could not be found in repositories"
+      mapM_ (logWarn . ("  Missing: " ++)) missing
+    else return ()
+  
+  logSubStep "Loading package metadata"
+  resolvedPkgs <- mapM (\(name, path) -> loadPackage path name) found
+  let loaded = [pkg | Just pkg <- resolvedPkgs]
+  logOK $ "Loaded " ++ show (length loaded) ++ " packages"
   
   logSubStep "Checking for package conflicts"
-  case checkConflicts config resolvedPkgs of
+  case checkConflicts config loaded of
     [] -> logOK "No conflicts detected"
     conflicts -> do
       logFail "Package conflicts detected:"
       mapM_ (logWarn . ("  " ++)) conflicts
       exitFailure
   
-  showBuildSummary config resolvedPkgs
+  showBuildSummary config loaded
   confirmed <- askConfirmation "Proceed with build?"
   
   if not confirmed
@@ -78,7 +100,7 @@ buildSystem config fromScratch = do
       exitFailure
     else do
       logStep "Building packages"
-      mapM_ (buildPackage config) resolvedPkgs
+      mapM_ (buildPackage config) loaded
       logOK "All packages built successfully"
       
       logSubStep "Creating new generation"
@@ -175,20 +197,53 @@ buildAutoconf config pkg sourceDir encirclement = do
 buildMake :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
 buildMake config pkg sourceDir encirclement = do
   logSubStep $ "Compiling (Makefile) " ++ pkgName pkg
+
   let useDefines = toMakeDefines config pkg
-  let cflags = "-O " ++ ldFlags config ++ (if null useDefines then "" else " " ++ useDefines)
-  let makeCmd = "cd " ++ sourceDir ++ " && make " ++ buildFlags config ++ " CC=gcc CFLAGS='" ++ cflags ++ "'"
+
+  let cflags =
+        "-O2 -march=native"
+        ++ if null useDefines
+           then ""
+           else " " ++ useDefines
+
+  let makeCmd =
+        "cd " ++ sourceDir
+        ++ " && make -j8"
+        ++ " CC=gcc"
+        ++ " CFLAGS='" ++ cflags ++ "'"
+
   exitCode <- system makeCmd
+
   case exitCode of
-    ExitSuccess -> logOK $ "Compiled " ++ pkgName pkg
+    ExitSuccess ->
+      logOK $ "Compiled " ++ pkgName pkg
+
     _ -> do
       logFail $ "Compilation failed for " ++ pkgName pkg
       exitFailure
-  
+
   logSubStep "Installing binaries"
-  system $ "mkdir -p " ++ encirclement ++ "/bin"
-  system $ "find " ++ sourceDir ++ " -maxdepth 1 -type f -executable ! -name '*.c' ! -name '*.h' -exec cp {} " ++ encirclement ++ "/bin/ \\;"
-  logOK $ "Installed " ++ pkgName pkg
+
+  let binDir = encirclement </> "bin"
+
+  createDirectoryIfMissing True binDir
+
+  let installCmd =
+        "find " ++ sourceDir
+        ++ " -maxdepth 1 -type f -executable"
+        ++ " ! -name '*.c'"
+        ++ " ! -name '*.h'"
+        ++ " -exec cp {} " ++ binDir ++ "/ \\;"
+
+  exitCode <- system installCmd
+
+  case exitCode of
+    ExitSuccess ->
+      logOK $ "Installed " ++ pkgName pkg
+
+    _ -> do
+      logFail $ "Failed to install " ++ pkgName pkg
+      exitFailure
 
 buildMeson :: SystemConfig -> Package -> FilePath -> FilePath -> IO ()
 buildMeson config pkg sourceDir encirclement = do

@@ -1,8 +1,11 @@
 module Main where
+
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import Dancer.Types
 import Dancer.Logging
+import Dancer.Index (buildIndex, searchIndex, lookupPackagePath)
+import Dancer.PackageLoader (loadPackage)
 import qualified Dancer.Config as Config
 
 main :: IO ()
@@ -21,7 +24,8 @@ handleSearch query = do
       logWarn "No local repositories found -- run 'dancer rebuild' at least once first"
       exitFailure
     else do
-      matches <- Config.searchPackages query repos
+      index <- buildIndex repos
+      let matches = searchIndex index query
       case matches of
         [] -> do
           putStrLn $ "No packages found matching \"" ++ query ++ "\""
@@ -39,19 +43,25 @@ handleUses pkgArg = do
       logWarn "No local repositories found -- run 'dancer rebuild' at least once first"
       exitFailure
     else do
-      result <- Config.resolvePackageByName pkgArg repos
-      case result of
+      index <- buildIndex repos
+      case lookupPackagePath index pkgArg of
         Nothing -> do
           putStrLn $ "Package not found: " ++ pkgArg
           exitFailure
-        Just pkg -> do
-          putStrLn $ pkgName pkg ++ " (" ++ pkgVersion pkg ++ ")"
-          if null (pkgUseFlags pkg)
-            then putStrLn "  No USE flags declared"
-            else do
-              putStrLn "  USE flags:"
-              mapM_ (\(UseFlagSpec name kind) -> putStrLn ("    " ++ name)) (pkgUseFlags pkg)
-          exitSuccess
+        Just pkgPath -> do
+          result <- loadPackage pkgPath pkgArg
+          case result of
+            Nothing -> do
+              putStrLn $ "Failed to load package: " ++ pkgArg
+              exitFailure
+            Just pkg -> do
+              putStrLn $ pkgName pkg ++ " (" ++ pkgVersion pkg ++ ")"
+              if null (pkgUseFlags pkg)
+                then putStrLn "  No USE flags declared"
+                else do
+                  putStrLn "  USE flags:"
+                  mapM_ (\(UseFlagSpec name kind) -> putStrLn ("    " ++ name)) (pkgUseFlags pkg)
+              exitSuccess
 
 printUsage :: IO ()
 printUsage = putStr $ unlines

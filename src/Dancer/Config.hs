@@ -112,57 +112,6 @@ getRepoName url =
   where
     dropEnd n xs = take (length xs - n) xs
 
-resolvePackagesByNameFromRepos :: [String] -> [FilePath] -> IO [Package]
-resolvePackagesByNameFromRepos pkgNames repos = do
-  packages <- mapM (`resolvePackageByName` repos) pkgNames
-  let resolved = catMaybes packages
-  return resolved
-
-resolvePackageByName :: String -> [FilePath] -> IO (Maybe Package)
-resolvePackageByName pkgName repoPaths = do
-  results <- mapM (tryLoadPackage pkgName) repoPaths
-  case listToMaybe [p | Just p <- results] of
-    Just pkg -> return (Just pkg)
-    Nothing -> do
-      logWarn $ "Package not found in any repository: " ++ pkgName
-      return Nothing
-
-tryLoadPackage :: String -> FilePath -> IO (Maybe Package)
-tryLoadPackage pkgName repoPath = do
-  let parts = splitOn "/" pkgName
-  case parts of
-    [cat, pkg] -> do
-      let pkgFile = repoPath </> cat </> pkg </> "package.hs"
-      exists <- doesFileExist pkgFile
-      if exists
-        then loadPackageDefinition pkgFile pkgName
-        else return Nothing
-    _ -> return Nothing
-
-loadPackageDefinition :: FilePath -> String -> IO (Maybe Package)
-loadPackageDefinition pkgFile pkgName = do
-  logProgress $ "Loading " ++ pkgName
-  
-  let moduleFile = scratchDir ++ "/LoadPkg.hs"
-  
-  system $ "mkdir -p " ++ scratchDir
-  system $ "cp " ++ pkgFile ++ " " ++ moduleFile
-  
-  output <- readProcess "ghc" ["-v0", "-i" ++ dancerSrcDir, "-outputdir", scratchDir, "-e", "print pkg", moduleFile] ""
-  
-  case reads output of
-    [(package, _)] -> do
-      logOK $ "Loaded " ++ pkgName
-      return (Just package)
-    _ -> do
-      logWarn $ "Failed to parse package from " ++ pkgName
-      return Nothing
-
-splitOn :: String -> String -> [String]
-splitOn delim str = case break (== head delim) str of
-  (a, []) -> [a]
-  (a, _:b) -> a : splitOn delim b
-
 validateConfig :: SystemConfig -> Either String ()
 validateConfig config
   | null (hostname config) = Left "hostname cannot be empty"
@@ -182,39 +131,6 @@ listLocalRepos = do
                       return (if isDir then Just p else Nothing)) entries
       return (catMaybes dirs)
 
-listAllPackageNames :: [FilePath] -> IO [String]
-listAllPackageNames repoPaths = do
-  results <- mapM listPackagesInRepo repoPaths
-  return (nub (concat results))
-
-listPackagesInRepo :: FilePath -> IO [String]
-listPackagesInRepo repoPath = do
-  exists <- doesDirectoryExist repoPath
-  if not exists
-    then return []
-    else do
-      cats <- listDirectory repoPath
-      results <- mapM (listPackagesInCategory repoPath) cats
-      return (concat results)
-
-listPackagesInCategory :: FilePath -> String -> IO [String]
-listPackagesInCategory repoPath cat = do
-  let catPath = repoPath </> cat
-  isDir <- doesDirectoryExist catPath
-  if not isDir
-    then return []
-    else do
-      pkgs <- listDirectory catPath
-      results <- mapM (\p -> do
-                          let pkgFile = catPath </> p </> "package.hs"
-                          fileExists <- doesFileExist pkgFile
-                          return (if fileExists then Just (cat ++ "/" ++ p) else Nothing)) pkgs
-      return (catMaybes results)
-
-searchPackages :: String -> [FilePath] -> IO [String]
-searchPackages query repoPaths = do
-  allNames <- listAllPackageNames repoPaths
-  return (sort [n | n <- allNames, query `isInfixOf` n])
 printConfig config = do
   putStrLn "System Configuration:"
   putStrLn $ "  Hostname: " ++ hostname config
