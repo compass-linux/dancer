@@ -1,5 +1,4 @@
 module Main where
-
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import Dancer.Types
@@ -51,7 +50,7 @@ handleUses pkgArg = do
             then putStrLn "  No USE flags declared"
             else do
               putStrLn "  USE flags:"
-              mapM_ (\f -> putStrLn ("    " ++ f)) (pkgUseFlags pkg)
+              mapM_ (\(UseFlagSpec name kind) -> putStrLn ("    " ++ name)) (pkgUseFlags pkg)
           exitSuccess
 
 printUsage :: IO ()

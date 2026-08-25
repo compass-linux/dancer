@@ -50,15 +50,21 @@ compileAndRunConfig path = do
     ExitSuccess -> do
       logOK "Config compiled"
       logSubStep "Executing config"
-      output <- readProcess binaryPath [] ""
-      cleanup
-      case reads output of
-        [(config, _)] -> do
-          logOK "Config parsed"
-          return config
-        _ -> do
-          logFail "Failed to parse config output"
+      binExists <- doesFileExist binaryPath
+      if not binExists
+        then do
+          logFail $ "Compiled binary not found at: " ++ binaryPath
           exitFailure
+        else do
+          output <- readProcess binaryPath [] ""
+          cleanup
+          case reads output of
+            [(config, _)] -> do
+              logOK "Config parsed"
+              return config
+            _ -> do
+              logFail $ "Failed to parse config output: " ++ show output
+              exitFailure
     _ -> do
       logFail $ "GHC compilation failed for " ++ path
       exitFailure

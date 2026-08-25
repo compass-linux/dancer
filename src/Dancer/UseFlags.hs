@@ -17,7 +17,7 @@ parseFlag flag       = (True, flag)
 --   2. per-package overrides from packageUseFlags, matched by pkgName
 resolveUseFlags :: SystemConfig -> Package -> [String]
 resolveUseFlags config pkg =
-  let supported   = pkgUseFlags pkg
+  let supported   = map flagName (pkgUseFlags pkg)
       globalOn    = [f | f <- useFlags config, f `elem` supported]
       overrides   = maybe [] id (lookup (pkgName pkg) (packageUseFlags config))
       applyOne enabled spec =
@@ -33,7 +33,8 @@ resolveUseFlags config pkg =
 disabledFlags :: SystemConfig -> Package -> [String]
 disabledFlags config pkg =
   let enabled = resolveUseFlags config pkg
-  in [f | f <- pkgUseFlags pkg, f `notElem` enabled]
+      
+  in [flagName f | f <- pkgUseFlags pkg, flagName f `notElem` enabled]
 
 toConfigureArgs :: SystemConfig -> Package -> String
 toConfigureArgs config pkg =
